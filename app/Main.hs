@@ -5,7 +5,7 @@ import Control.Monad.State
 import Data.Maybe
 import GHC.IO.Handle
 import System.Console.ANSI
-import System.Exit (exitSuccess)
+import System.Exit
 import System.IO
 import System.Random
 
@@ -73,7 +73,7 @@ mkConfig = do
 mkGame :: Game
 mkGame =
   MkGame
-    { gSnake = [(12, 40), (12, 41), (12, 42), (12, 43), (12, 44)]
+    { gSnake = zip [12, 12 ..] [40 .. 90] -- [(12, 40), (12, 41), (12, 42), (12, 43), (12, 44)]
     , gFood = (4, 100)
     , gScore = 0
     , gDirection = West
@@ -119,9 +119,9 @@ randomizeFood = do
   return (newRow, newCol)
 
 overflow :: Point -> Size -> Direction -> Point
-overflow (r, c) (_, maxCols) East = if c == maxCols then (r, 1) else (r, c)
+overflow (r, c) (_, maxCols) East = if c == maxCols then (r, 0) else (r, c)
 overflow (r, c) (_, maxCols) West = if c == 0 then (r, maxCols - 1) else (r, c)
-overflow (r, c) (maxRows, _) South = if r == maxRows then (1, c) else (r, c)
+overflow (r, c) (maxRows, _) South = if r == maxRows then (0, c) else (r, c)
 overflow (r, c) (maxRows, _) North = if r == 0 then (maxRows - 1, c) else (r, c)
 
 moveSnake :: Board ()
@@ -132,14 +132,15 @@ moveSnake = do
       food = gFood game
       size = cSize config
       snake@(head : _) = gSnake game
-      ateFood = food == head
-      (r, c) = head
-      head' = case direction of
-        West -> (r, c - 1)
-        East -> (r, c + 1)
-        North -> (r - 1, c)
-        South -> (r + 1, c)
+      head' =
+        let (r, c) = head
+         in case direction of
+              West -> (r, c - 1)
+              East -> (r, c + 1)
+              North -> (r - 1, c)
+              South -> (r + 1, c)
       newHead = overflow head' size direction
+      ateFood = food == newHead
   if ateFood
     then do
       let newScore = gScore game + 1
@@ -164,10 +165,20 @@ waitFromDirection = do
         _ -> 100
   return wait
 
+checkDeath :: Board ()
+checkDeath = do
+  game <- get
+  let snake = gSnake game
+      sHead = head snake
+      sBody = tail snake
+      eatItself = sHead `elem` sBody
+  when eatItself . liftIO $ exitGame >> exitFailure
+
 play :: Board ()
 play = do
   printBoard
   moveSnake
+  checkDeath
   wait <- waitFromDirection
   isInput <- liftIO $ hWaitForInput stdin wait
   if isInput
@@ -186,5 +197,16 @@ parseInput = do
     _ -> return ()
   play
 
+canChangeDirection :: Direction -> Direction -> Bool
+canChangeDirection West East = False
+canChangeDirection East West = False
+canChangeDirection South North = False
+canChangeDirection North South = False
+canChangeDirection target current = True
+
 changeDirection :: Direction -> Board ()
-changeDirection d = modify $ \game -> game{gDirection = d}
+changeDirection d = do
+  game <- get
+  let direction = gDirection game
+      canChange = canChangeDirection d direction
+  when canChange $ modify $ \game -> game{gDirection = d}
